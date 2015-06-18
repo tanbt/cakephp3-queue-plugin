@@ -1,11 +1,11 @@
-# CakeQueue plugin for CakePHP
+# Search Engine Optimization CakePHP Plugin
+* Author: BUI TRUNG TAN
+* Contribute: DO QUOC BAO
+* Version: 6.2.1
+* License: MIT
 
-## Installation
+## Features
 
-You can install this plugin into your CakePHP application using [composer](http://getcomposer.org).
-
-The recommended way to install composer packages is:
-
-```
-composer require your-name-here/CakeQueue
-```
+Tool for all your CakePHP App to interact with Queue systems
+* Beanstalkd
+* Amazon SQS
