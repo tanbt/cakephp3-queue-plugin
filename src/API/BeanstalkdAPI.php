@@ -11,6 +11,7 @@ namespace CakeQueue\API;
 use Cake\Controller\ComponentRegistry;
 use Pheanstalk\Exception;
 use Pheanstalk\Pheanstalk;
+use Cake\ORM\TableRegistry;
 
 class BeanstalkdAPI {
 
@@ -65,7 +66,16 @@ class BeanstalkdAPI {
                 ->useTube($this->_tube)
                 ->put(json_encode($job_data));
 
-            //insert job_id with data to DB or log
+            $queue_jobs = TableRegistry::get('CakeQueue.QueueJobs');
+            $queue_job = $queue_jobs->newEntity([
+                'job_id'        =>  $job_id,
+                'job_data'      =>  json_encode($job_data),
+                'status'    =>  0,
+                'created'       => date('Y-m-d H:i:s'),
+                'modified'      => date('Y-m-d H:i:s')
+            ]);
+            $queue_jobs->save($queue_job);
+
             return $job_id;
         }
         return FALSE;
@@ -102,6 +112,11 @@ class BeanstalkdAPI {
 
         $result = call_user_func_array([$processing_class, $processing_method],$job_data['data']);
 
+        $queue_jobs = TableRegistry::get('CakeQueue.QueueJobs');
+        $queue_job = $queue_jobs->find('all')
+            ->where(['job_id = ' => $job_id])
+            ->first();
+
         if(!$result){
             $msg  = "\n-----------------------JOB FAILED!-----------------------------\n";
             $msg .= "Time: " . date('Y-m-d H:i:s');
@@ -110,7 +125,19 @@ class BeanstalkdAPI {
             $msg .= 'Data: ' . serialize($job_data['data']);
             $msg .= "\n---------------------------------------------------------------\n";
             error_log($msg, 3, "logs/beanstalk.log");
+
+            $queue_jobs->patchEntity($queue_job, [
+                'status'    =>  2,
+                'modified'   => date('Y-m-d H:i:s'),
+                'comment'   => $msg
+            ]);
+        } else {
+            $queue_jobs->patchEntity($queue_job, [
+                'status'    =>  1,
+                'modified'   => date('Y-m-d H:i:s')
+            ]);
         }
+        $queue_jobs->save($queue_job);
 
         // Job always has to be removed, even its processing was failed.
         // A log or table should track the job has been processed success or failed,
