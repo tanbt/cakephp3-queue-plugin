@@ -1,17 +1,11 @@
 <?php
-/**
- * Created by PhpStorm.
- * User: tanub
- * Date: 07/06/2015
- * Time: 17:14
- */
-
 namespace CakeQueue\API;
 
 use Cake\Controller\ComponentRegistry;
 use Pheanstalk\Exception;
 use Pheanstalk\Pheanstalk;
 use Cake\ORM\TableRegistry;
+use Cake\I18n\I18n;
 
 class BeanstalkdAPI {
 
@@ -62,25 +56,24 @@ class BeanstalkdAPI {
                 'data'          =>  $data
             ];
 
-            $job_id = $this->_beanstalkd
-                ->useTube($this->_tube)
-                ->put(json_encode($job_data));
-
-            $queue_jobs = TableRegistry::get('CakeQueue.QueueJobs');
-            $queue_job = $queue_jobs->newEntity([
-                'job_id'        =>  $job_id,
+            $queue_jobs_table = TableRegistry::get('CakeQueue.QueueJobs');
+            $queue_job = $queue_jobs_table->newEntity([
+                'm_language_code'   =>  I18n::locale(),
                 'job_data'      =>  json_encode($job_data),
-                'status'    =>  0,
+                'status'        =>  0,
                 'created'       => date('Y-m-d H:i:s'),
                 'modified'      => date('Y-m-d H:i:s')
             ]);
-            $queue_jobs->save($queue_job);
 
-            return $job_id;
+            if($queue_jobs_table->save($queue_job)) {
+                $this->_beanstalkd
+                    ->useTube($this->_tube)
+                    ->put($queue_job->id);
+                return $queue_job->id;
+            }
         }
         return FALSE;
     }
-
 
     public function listenJob(){
         $this->_beanstalkd->watch($this->_tube);
@@ -96,11 +89,17 @@ class BeanstalkdAPI {
      * @param \Pheanstalk\Job $job
      */
     public function executeJob($job){
-        $job_id     = $job->getId();
-        $job_data   = json_decode($job->getData(), true);
+        $job_id             = $job->getId();
+        $t_queue_job_id     = $job->getData();
 
         echo "\n-------------------------------------------------------------------\n";
-        echo "Receive job id:{$job_id}\n";
+        echo "Receive job id:{$job_id} in row: {$t_queue_job_id}\n";
+
+        $queue_jobs_table   = TableRegistry::get('CakeQueue.QueueJobs');
+        $t_queue_job        = $queue_jobs_table->get($t_queue_job_id);
+        $job_data           = json_decode($t_queue_job->job_data, TRUE);
+        I18n::locale($t_queue_job->m_language_code);
+
         echo "Class: {$job_data['class_name']}\n";
         echo "Method: {$job_data['class_method']}\n";
         echo "Data:\n";
@@ -112,11 +111,6 @@ class BeanstalkdAPI {
 
         $result = call_user_func_array([$processing_class, $processing_method],$job_data['data']);
 
-        $queue_jobs = TableRegistry::get('CakeQueue.QueueJobs');
-        $queue_job = $queue_jobs->find('all')
-            ->where(['job_id = ' => $job_id])
-            ->first();
-
         if(!$result){
             $msg  = "\n-----------------------JOB FAILED!-----------------------------\n";
             $msg .= "Time: " . date('Y-m-d H:i:s');
@@ -126,22 +120,19 @@ class BeanstalkdAPI {
             $msg .= "\n---------------------------------------------------------------\n";
             error_log($msg, 3, "logs/beanstalk.log");
 
-            $queue_jobs->patchEntity($queue_job, [
+            $queue_jobs_table->patchEntity($t_queue_job, [
                 'status'    =>  2,
                 'modified'   => date('Y-m-d H:i:s'),
                 'comment'   => $msg
             ]);
         } else {
-            $queue_jobs->patchEntity($queue_job, [
-                'status'    =>  1,
-                'modified'   => date('Y-m-d H:i:s')
+            $queue_jobs_table->patchEntity($t_queue_job, [
+                'job_id'        => $job_id,
+                'status'        => 1,
+                'modified'      => date('Y-m-d H:i:s')
             ]);
         }
-        $queue_jobs->save($queue_job);
-
-        // Job always has to be removed, even its processing was failed.
-        // A log or table should track the job has been processed success or failed,
-        // it means the callback (processing) function must has exception and return TRUE or FALSE
+        $queue_jobs_table->save($t_queue_job);
 
         echo "Process completed.\n";
         $this->_beanstalkd->delete($job);
